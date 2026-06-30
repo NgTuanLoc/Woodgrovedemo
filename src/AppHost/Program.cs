@@ -1,5 +1,7 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Resources are added in later tasks.
+var keycloak = builder.AddKeycloak("keycloak", 8080)
+    .WithDataVolume()
+    .WithRealmImport("../../keycloak");
 
 builder.Build().Run();
