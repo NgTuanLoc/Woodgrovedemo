@@ -44,7 +44,7 @@ OIDC is OAuth2 **plus** an identity layer. When you request scope `openid`, Keyc
 
 | Token | Purpose | Where it lives in this project |
 |-------|---------|-------------------------------|
-| **ID Token** | Proves identity to the client | Stored server-side in `Woodgrove.Bff` cookie properties via `SaveTokens = true`; accessible via `/bff/debug/tokens` (dev only) |
+| **ID Token** | Proves identity to the client | Stored server-side (encrypted in an HttpOnly cookie; readable only server-side, never by JavaScript) in `Woodgrove.Bff` cookie properties via `SaveTokens = true`; accessible via `/bff/debug/tokens` (dev only) |
 | **Access Token** | Sent to the API as `Bearer` proof | Also in cookie properties; YARP attaches it to every proxied request |
 | **Refresh Token** | Exchange for a new access token when it expires | In cookie properties; `TokenRefresher.cs` uses it automatically |
 
@@ -99,7 +99,7 @@ header.payload.signature
 
 ## 3. Authorization Code + PKCE Flow
 
-PKCE (Proof Key for Code Exchange) prevents authorization code interception attacks. The client generates a `code_verifier` (random string) and sends `code_challenge = SHA256(code_verifier)` upfront; only the holder of the original `code_verifier` can exchange the code.
+PKCE (Proof Key for Code Exchange) prevents authorization code interception attacks. The client generates a `code_verifier` (random string) and sends `code_challenge = BASE64URL(SHA256(ASCII(code_verifier)))` upfront (the challenge is the base64url-encoded SHA-256 digest of the verifier; the raw hash bytes are never sent); only the holder of the original `code_verifier` can exchange the code.
 
 ```mermaid
 sequenceDiagram
@@ -191,7 +191,7 @@ Browser                BFF                    Keycloak
 
 | Approach | Token Storage | XSS Risk | CSRF Risk | Complexity |
 |----------|--------------|-----------|-----------|------------|
-| **BFF (this project)** | Server-side (HttpOnly cookie) | None — JS cannot read HttpOnly cookie | Low (SameSite=Lax) | Higher (BFF needed) |
+| **BFF (this project)** | Server-side (encrypted in an HttpOnly cookie; readable only server-side, never by JavaScript) | None — JS cannot read HttpOnly cookie | Low (SameSite=Lax) | Higher (BFF needed) |
 | Browser localStorage | Client-side | HIGH — any script can steal tokens | N/A | Simple |
 | Browser sessionStorage | Client-side | HIGH — any script can steal tokens | N/A | Simple |
 | In-memory (SPA) | Client-side RAM | Moderate — reset on refresh | N/A | Medium |
@@ -379,6 +379,17 @@ const bffUrl =
   process.env["services__webbff__http__0"] ??
   "http://localhost:5100";
 ```
+
+The Vite dev server proxies both `/bff` and `/api` path prefixes to the BFF, so all backend requests traverse the BFF:
+```ts
+// vite.config.ts (server.proxy)
+proxy: {
+  "/bff": { target: bffUrl, changeOrigin: true, secure: false },
+  "/api": { target: bffUrl, changeOrigin: true, secure: false },
+}
+```
+
+In development, the browser only talks to the Vite origin; all requests are proxied transparently to the BFF.
 
 ---
 
@@ -610,6 +621,7 @@ $bytes = [Convert]::FromBase64String($payload.Replace('-','+').Replace('_','/'))
 Realm:        woodgrove
 Client:       web-bff  (confidential, secret: dev-bff-secret — DEV ONLY)
 API audience: woodgrove-api
+PKCE:         enabled (UsePkce = true)
 Roles:        admin, user
 Users:        alice (admin+user) | bob (user) — password: password
 
