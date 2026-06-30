@@ -14,4 +14,11 @@ var bff = builder.AddProject<Projects.WebBff>("webbff")
     .WaitFor(keycloak)
     .WaitFor(api);
 
+builder.AddNpmApp("web", "../web", "dev")
+    .WithReference(bff)
+    .WaitFor(bff)
+    .WithHttpEndpoint(env: "PORT")
+    .WithExternalHttpEndpoints()
+    .PublishAsDockerFile();
+
 builder.Build().Run();
