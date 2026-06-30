@@ -8,4 +8,10 @@ var api = builder.AddProject<Projects.Api>("api")
     .WithReference(keycloak)
     .WaitFor(keycloak);
 
+var bff = builder.AddProject<Projects.WebBff>("webbff")
+    .WithReference(keycloak)
+    .WithReference(api)
+    .WaitFor(keycloak)
+    .WaitFor(api);
+
 builder.Build().Run();
