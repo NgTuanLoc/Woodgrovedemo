@@ -1,6 +1,7 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 var keycloak = builder.AddKeycloak("keycloak", 8080)
+    .WithLifetime(ContainerLifetime.Persistent)
     .WithDataVolume()
     .WithRealmImport("../../keycloak");
 
