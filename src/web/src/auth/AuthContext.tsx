@@ -28,8 +28,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = () =>
-    (window.location.href = `/bff/login?returnUrl=${encodeURIComponent(window.location.pathname)}`);
+  const login = () => {
+    const returnUrl =
+      window.location.pathname + window.location.search + window.location.hash;
+    window.location.href = `/bff/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+  };
   const logout = () => (window.location.href = "/bff/logout");
 
   return <AuthCtx.Provider value={{ user, loading, login, logout }}>{children}</AuthCtx.Provider>;
