@@ -28,12 +28,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // Relative URL so the BFF's local-URL check accepts it; preserves query + hash.
+  const currentReturnUrl = () =>
+    window.location.pathname + window.location.search + window.location.hash;
   const login = () => {
-    const returnUrl =
-      window.location.pathname + window.location.search + window.location.hash;
-    window.location.href = `/bff/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+    window.location.href = `/bff/login?returnUrl=${encodeURIComponent(currentReturnUrl())}`;
   };
-  const logout = () => (window.location.href = "/bff/logout");
+  const logout = () => {
+    window.location.href = `/bff/logout?returnUrl=${encodeURIComponent(currentReturnUrl())}`;
+  };
 
   return <AuthCtx.Provider value={{ user, loading, login, logout }}>{children}</AuthCtx.Provider>;
 }

@@ -72,12 +72,23 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // --- BFF endpoints ---
+
+// Only allow relative, same-site return URLs to prevent open-redirect abuse
+// (e.g. /bff/logout?returnUrl=https://evil.com). Mirrors the framework's
+// IUrlHelper.IsLocalUrl logic: must start with "/" (but not "//" or "/\") or "~/".
+static string SafeReturnUrl(string? url) =>
+    !string.IsNullOrEmpty(url)
+    && ((url[0] == '/' && (url.Length == 1 || (url[1] != '/' && url[1] != '\\')))
+        || (url.Length > 1 && url[0] == '~' && url[1] == '/'))
+        ? url
+        : "/";
+
 app.MapGet("/bff/login", (string? returnUrl) =>
-    Results.Challenge(new AuthenticationProperties { RedirectUri = returnUrl ?? "/" }))
+    Results.Challenge(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) }))
     .AllowAnonymous();
 
-app.MapGet("/bff/logout", () =>
-    Results.SignOut(new AuthenticationProperties { RedirectUri = "/" },
+app.MapGet("/bff/logout", (string? returnUrl) =>
+    Results.SignOut(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) },
         new[] { CookieAuthenticationDefaults.AuthenticationScheme,
                 OpenIdConnectDefaults.AuthenticationScheme }));
 
