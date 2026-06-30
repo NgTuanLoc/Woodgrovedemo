@@ -130,9 +130,7 @@ Run `dotnet run --project src/AppHost` and verify the following in a browser:
 
 A detailed reference covering OIDC concepts, JWT anatomy, PKCE flow, BFF pattern, Keycloak configuration, and debugging tips:
 
-```
-docs/cheatsheet.md
-```
+[docs/cheatsheet.md](docs/cheatsheet.md)
 
 ---
 
