@@ -94,6 +94,33 @@ app.MapGet("/bff/user", (HttpContext ctx) =>
     });
 }).AllowAnonymous();
 
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/bff/debug/tokens", async (HttpContext ctx) =>
+    {
+        if (ctx.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+
+        static object Decode(string? jwt)
+        {
+            if (string.IsNullOrEmpty(jwt)) return new { present = false };
+            var parts = jwt.Split('.');
+            if (parts.Length < 2) return new { present = true, decoded = "(opaque)" };
+            string Pad(string s) => s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=')
+                .Replace('-', '+').Replace('_', '/');
+            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Pad(parts[1])));
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return new { present = true, payload = doc.RootElement.Clone() };
+        }
+
+        return Results.Ok(new
+        {
+            id_token = Decode(await ctx.GetTokenAsync("id_token")),
+            access_token = Decode(await ctx.GetTokenAsync("access_token")),
+            expires_at = await ctx.GetTokenAsync("expires_at")
+        });
+    });
+}
+
 app.MapReverseProxy();
 
 app.Run();
