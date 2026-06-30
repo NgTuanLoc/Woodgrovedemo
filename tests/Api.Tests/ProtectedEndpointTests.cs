@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
@@ -42,8 +41,10 @@ public class ProtectedEndpointTests : IClassFixture<WebApplicationFactory<Progra
         _factory = factory.WithWebHostBuilder(b => b.ConfigureTestServices(s =>
         {
             // AddKeycloakJwtBearer already registered a "Bearer" scheme via
-            // IConfigureOptions<AuthenticationOptions>. Removing those descriptors
-            // before re-registering with TestAuthHandler prevents "Scheme already exists".
+            // IConfigureOptions<AuthenticationOptions>. Removing all IConfigureOptions<AuthenticationOptions>
+            // descriptors prevents "Scheme already exists" error when re-registering with TestAuthHandler.
+            // TODO: Refactor to use PostConfigure after clearing both SchemeMap and internal Schemes list
+            // when ASP.NET Core APIs support mutable Schemes collection access.
             var toRemove = s
                 .Where(d => d.ServiceType == typeof(IConfigureOptions<AuthenticationOptions>))
                 .ToList();
