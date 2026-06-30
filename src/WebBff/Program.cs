@@ -21,6 +21,10 @@ builder.Services.AddAuthentication(options =>
         options.Cookie.SameSite = SameSiteMode.Lax;
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
+        options.Events = new CookieAuthenticationEvents
+        {
+            OnValidatePrincipal = TokenRefresher.ValidateAsync
+        };
     })
     .AddKeycloakOpenIdConnect("keycloak", realm: "woodgrove",
         OpenIdConnectDefaults.AuthenticationScheme, options =>
