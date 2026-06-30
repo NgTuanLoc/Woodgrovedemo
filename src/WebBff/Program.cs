@@ -19,6 +19,9 @@ builder.Services.AddAuthentication(options =>
         options.Cookie.Name = "Woodgrove.Bff";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
+        // SameAsRequest keeps the cookie usable over plain HTTP in local dev;
+        // set CookieSecurePolicy.Always in production (HTTPS-only).
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
         options.ExpireTimeSpan = TimeSpan.FromHours(8);
         options.SlidingExpiration = true;
         options.Events = new CookieAuthenticationEvents
@@ -116,11 +119,18 @@ if (app.Environment.IsDevelopment())
             if (string.IsNullOrEmpty(jwt)) return new { present = false };
             var parts = jwt.Split('.');
             if (parts.Length < 2) return new { present = true, decoded = "(opaque)" };
-            string Pad(string s) => s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=')
-                .Replace('-', '+').Replace('_', '/');
-            var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Pad(parts[1])));
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            return new { present = true, payload = doc.RootElement.Clone() };
+            try
+            {
+                string Pad(string s) => s.PadRight(s.Length + (4 - s.Length % 4) % 4, '=')
+                    .Replace('-', '+').Replace('_', '/');
+                var json = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(Pad(parts[1])));
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                return new { present = true, payload = doc.RootElement.Clone() };
+            }
+            catch
+            {
+                return new { present = true, decoded = "(unparseable)" };
+            }
         }
 
         return Results.Ok(new
