@@ -12,7 +12,7 @@ export function Profile() {
         <summary>All claims</summary>
         <ul>
           {user.claims.map((c, i) => (
-            <li key={i}><code>{c.type}</code>: {c.value}</li>
+            <li key={`${c.type}:${c.value}:${i}`}><code>{c.type}</code>: {c.value}</li>
           ))}
         </ul>
       </details>
