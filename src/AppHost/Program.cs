@@ -1,11 +1,12 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// No data volume / persistent lifetime on purpose: the realm JSON is the source
-// of truth for this demo, and Keycloak only imports a realm if it doesn't already
-// exist. A persisted realm would silently ignore edits to woodgrove-realm.json.
-// Each run starts fresh and re-imports. Add .WithDataVolume() once your realm is
-// stable if you want to keep runtime-created data across restarts.
+// NOTE: Keycloak only imports a realm if it doesn't already exist. With a data
+// volume + persistent container the realm survives restarts, so edits to
+// woodgrove-realm.json are ignored until you remove the data volume:
+//   docker rm -f <keycloak-container> && docker volume rm <apphost>-keycloak-data
 var keycloak = builder.AddKeycloak("keycloak", 8080)
+    .WithLifetime(ContainerLifetime.Persistent)
+    .WithDataVolume()
     .WithRealmImport("../../keycloak");
 
 var api = builder.AddProject<Projects.Api>("api")
