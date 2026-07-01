@@ -158,10 +158,10 @@ In this project there is only one client (`web-bff`), but a second React app wit
 
 ### End-Session / Single Logout
 
-`/bff/logout` in `src/WebBff/Program.cs`:
+`/bff/logout` in `src/WebBff/Program.cs` (`SafeReturnUrl` is covered in §5 "Deep-Link Return"):
 ```csharp
-app.MapGet("/bff/logout", () =>
-    Results.SignOut(new AuthenticationProperties { RedirectUri = "/" },
+app.MapGet("/bff/logout", (string? returnUrl) =>
+    Results.SignOut(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) },
         new[] { CookieAuthenticationDefaults.AuthenticationScheme,
                 OpenIdConnectDefaults.AuthenticationScheme }));
 ```
@@ -237,6 +237,34 @@ export async function apiGet<T>(path: string): Promise<T> {
 ### Silent Token Refresh
 
 `src/WebBff/TokenRefresher.cs` runs on every authenticated request via `OnValidatePrincipal`. If the access token expires in fewer than 1 minute, it calls the Keycloak token endpoint with `grant_type=refresh_token` and updates the cookie. If refresh fails, `RejectPrincipal()` forces re-login.
+
+### Deep-Link Return (`returnUrl`)
+
+When the user clicks **Log in**, the SPA records where they were so they land back on that page after authenticating. This is a **different concern** from the *origin* fix in §7: forwarded headers decide *which origin* you return to (SPA vs BFF); `returnUrl` decides *which page/route* within the SPA.
+
+```typescript
+// src/web/src/auth/AuthContext.tsx — relative URL preserves path + query + hash
+const currentReturnUrl = () =>
+  window.location.pathname + window.location.search + window.location.hash;
+const login  = () => (window.location.href = `/bff/login?returnUrl=${encodeURIComponent(currentReturnUrl())}`);
+const logout = () => (window.location.href = `/bff/logout?returnUrl=${encodeURIComponent(currentReturnUrl())}`);
+```
+
+The BFF uses `returnUrl` as the post-login/logout `RedirectUri`, but **only after validating it is a same-site relative URL** — otherwise `/bff/logout?returnUrl=https://evil.com` would be an **open redirect** (attacker-controlled redirect after a trusted login):
+
+```csharp
+// src/WebBff/Program.cs — accept only "/path" (not "//" or "/\") or "~/path"; else "/"
+static string SafeReturnUrl(string? url) =>
+    !string.IsNullOrEmpty(url)
+    && ((url[0] == '/' && (url.Length == 1 || (url[1] != '/' && url[1] != '\\')))
+        || (url.Length > 1 && url[0] == '~' && url[1] == '/'))
+        ? url : "/";
+
+app.MapGet("/bff/login", (string? returnUrl) =>
+    Results.Challenge(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) }));
+```
+
+> This demo's SPA has a single route, so `returnUrl` is always `/` in practice. The pattern is kept because return-to-page (plus its open-redirect validation) is standard in real apps and becomes essential the moment you add client-side routing.
 
 ---
 
@@ -380,16 +408,49 @@ const bffUrl =
   "http://localhost:5100";
 ```
 
-The Vite dev server proxies both `/bff` and `/api` path prefixes to the BFF, so all backend requests traverse the BFF:
+The Vite dev server proxies the backend path prefixes **and the OIDC callback paths** to the BFF, so all backend requests traverse the BFF:
 ```ts
 // vite.config.ts (server.proxy)
 proxy: {
-  "/bff": { target: bffUrl, changeOrigin: true, secure: false },
-  "/api": { target: bffUrl, changeOrigin: true, secure: false },
+  // xfwd forwards X-Forwarded-Host/Proto so the BFF builds its OIDC
+  // redirect_uri on the SPA origin (see "Two Origins in Dev" below).
+  "/bff":                   { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+  "/api":                   { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+  "/signin-oidc":           { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+  "/signout-callback-oidc": { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
 }
 ```
 
 In development, the browser only talks to the Vite origin; all requests are proxied transparently to the BFF.
+
+#### Two Origins in Dev — Forwarded Headers & Callback Proxying
+
+In development there are **two origins**: the Vite dev server (e.g. `localhost:5173`, serving the SPA) and the BFF (e.g. `localhost:7228`). The full-page OIDC redirect flow breaks in two ways unless configured:
+
+**Problem 1 — `redirect_uri` built on the wrong origin.**
+`changeOrigin: true` rewrites the outgoing `Host` header to the BFF. So when the browser hits `/bff/login`, the BFF builds its OIDC `redirect_uri` on **its own** origin. Keycloak then returns the browser to the BFF, and the post-login redirect lands on `localhost:7228` instead of the SPA on `localhost:5173`.
+
+*Fix:* Vite sends `xfwd: true` → adds `X-Forwarded-Host` (`localhost:5173`) and `X-Forwarded-Proto` (`http`). The BFF honors them (Development only) so `redirect_uri` — and the relative post-login redirect — resolve back to the SPA origin. The browser stays on the SPA the entire flow.
+
+```csharp
+// src/WebBff/Program.cs — dev only
+builder.Services.Configure<ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = ForwardedHeaders.XForwardedHost | ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear();   // trust the Vite dev proxy (dev only)
+    o.KnownProxies.Clear();
+});
+// ...
+if (app.Environment.IsDevelopment())
+    app.UseForwardedHeaders();  // must run before auth reads scheme/host
+```
+
+**Problem 2 — the callback hits Vite's SPA fallback.**
+Keycloak redirects the browser to `/signin-oidc?code=...`. If Vite doesn't proxy that path, its SPA fallback serves `index.html` and the code exchange never reaches the BFF.
+
+*Fix:* proxy `/signin-oidc` and `/signout-callback-oidc` (the OIDC handler's default `CallbackPath` / `SignedOutCallbackPath`) to the BFF, as shown in the proxy block above.
+
+> **Production note:** none of this is needed in production, where the BFF is the single origin that serves the SPA and receives the callback directly. Forwarded headers are gated behind `IsDevelopment()` because trusting arbitrary proxy headers on a public origin is a spoofing risk.
 
 ---
 
@@ -508,6 +569,15 @@ Flow:
 **Cause:** The server clock is out of sync with Keycloak. JWT validation uses wall-clock time.
 
 **Fix:** Ensure NTP is running on all machines. .NET's `TokenValidationParameters.ClockSkew` defaults to 5 minutes tolerance, which usually covers small drift. Increase it temporarily for debugging: `ClockSkew = TimeSpan.FromMinutes(10)`.
+
+---
+
+### Post-Login Lands on the BFF, Not the SPA (Dev)
+**Symptom:** After a successful Keycloak login the browser ends up on the BFF origin (e.g. `localhost:7228`) instead of the SPA (`localhost:5173`).
+
+**Cause:** With `changeOrigin: true`, the Vite proxy rewrites the `Host` header, so the BFF builds its OIDC `redirect_uri` on its own origin and Keycloak sends the browser there.
+
+**Fix:** Forward the original host/proto from Vite (`xfwd: true`) and honor it in the BFF via `UseForwardedHeaders()` (Development only); also proxy `/signin-oidc` and `/signout-callback-oidc`. See §7 "Two Origins in Dev".
 
 ---
 
@@ -633,8 +703,8 @@ Discovery:    http://localhost:8080/realms/woodgrove/.well-known/openid-configur
 Admin UI:     http://localhost:8080  (admin / admin)
 
 BFF endpoints:
-  GET /bff/login          → triggers OIDC challenge
-  GET /bff/logout         → deletes cookie + end-session at Keycloak
+  GET /bff/login?returnUrl=  → triggers OIDC challenge (returnUrl validated same-site)
+  GET /bff/logout?returnUrl= → deletes cookie + end-session at Keycloak
   GET /bff/user           → returns name + roles (or 401)
   GET /bff/debug/tokens   → decoded tokens (dev only)
 
