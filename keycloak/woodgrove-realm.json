@@ -60,7 +60,7 @@
       "firstName": "Alice",
       "lastName": "Admin",
       "credentials": [{ "type": "password", "value": "password", "temporary": false }],
-      "realmRoles": ["admin", "user"]
+      "realmRoles": ["admin", "user", "offline_access"]
     },
     {
       "username": "bob",
@@ -70,7 +70,7 @@
       "firstName": "Bob",
       "lastName": "User",
       "credentials": [{ "type": "password", "value": "password", "temporary": false }],
-      "realmRoles": ["user"]
+      "realmRoles": ["user", "offline_access"]
     }
   ]
 }
