@@ -69,7 +69,7 @@ Aspire starts all four resources in dependency order: Keycloak first, then API a
 | `alice`  | `password` | `admin`, `user` |
 | `bob`    | `password` | `user`          |
 
-Keycloak admin console: this Aspire setup serves Keycloak over **HTTPS on an Aspire-assigned port** (not `http://localhost:8080`). Open the **`keycloak` resource in the Aspire dashboard** for its URL, read the **auto-generated admin password** from that resource's details/env (username `admin`), then select realm `woodgrove`.
+Keycloak admin console: this Aspire setup serves Keycloak over **HTTPS on an Aspire-assigned (dynamic) port** (not `http://localhost:8080`). Open the **`keycloak` resource in the Aspire dashboard** and click its endpoint link, then log in as **`admin` / `admin`** (pinned in `src/AppHost/Program.cs`) and select realm `woodgrove`. Accept the dev-cert warning.
 
 ---
 
