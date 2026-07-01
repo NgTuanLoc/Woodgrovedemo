@@ -13,8 +13,14 @@ export default defineConfig({
   server: {
     port: Number(process.env.PORT) || 5173,
     proxy: {
-      "/bff": { target: bffUrl, changeOrigin: true, secure: false },
-      "/api": { target: bffUrl, changeOrigin: true, secure: false },
+      // xfwd forwards X-Forwarded-Host/Proto so the BFF builds its OIDC
+      // redirect_uri on this SPA origin and login returns here (not the BFF).
+      // The OIDC callback paths must be proxied too, or Vite's SPA fallback
+      // would swallow them.
+      "/bff": { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+      "/api": { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+      "/signin-oidc": { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
+      "/signout-callback-oidc": { target: bffUrl, changeOrigin: true, secure: false, xfwd: true },
     },
   },
   test: {

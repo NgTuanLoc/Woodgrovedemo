@@ -3,11 +3,23 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Yarp.ReverseProxy.Transforms;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
+
+// In dev the SPA is served by the Vite dev server on a different origin and
+// proxies /bff, /api and the OIDC callback to this BFF. Honor the forwarded
+// host/proto Vite sends (xfwd) so the OIDC redirect_uri is built on the SPA
+// origin and the browser returns to the SPA (not the BFF) after login.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedHost | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
 
 builder.Services.AddAuthentication(options =>
     {
@@ -70,6 +82,13 @@ builder.Services.AddReverseProxy()
     });
 
 var app = builder.Build();
+
+// Apply forwarded headers before anything reads scheme/host (dev only; the Vite
+// dev server is the trusted proxy). In production the BFF is the single origin
+// and no forwarding is needed.
+if (app.Environment.IsDevelopment())
+    app.UseForwardedHeaders();
+
 app.MapDefaultEndpoints();
 app.UseAuthentication();
 app.UseAuthorization();
