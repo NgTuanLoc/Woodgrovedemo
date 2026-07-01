@@ -35,7 +35,7 @@ API  (src/Api)
 
 | Resource   | Type              | Description                                       |
 |------------|-------------------|---------------------------------------------------|
-| `keycloak` | Docker container  | Keycloak 26, realm `woodgrove`, port 8080         |
+| `keycloak` | Docker container  | Keycloak 26, realm `woodgrove` (HTTPS, Aspire-assigned port — see dashboard) |
 | `api`      | .NET project      | JWT-protected API (`src/Api`)                     |
 | `webbff`   | .NET project      | Cookie + OIDC BFF with YARP proxy (`src/WebBff`)  |
 | `web`      | npm / Vite        | React 19 SPA dev server (`src/web`)               |
@@ -69,7 +69,7 @@ Aspire starts all four resources in dependency order: Keycloak first, then API a
 | `alice`  | `password` | `admin`, `user` |
 | `bob`    | `password` | `user`          |
 
-Keycloak admin console: `http://localhost:8080` — log in as `admin` / `admin`, select realm `woodgrove`.
+Keycloak admin console: this Aspire setup serves Keycloak over **HTTPS on an Aspire-assigned port** (not `http://localhost:8080`). Open the **`keycloak` resource in the Aspire dashboard** for its URL, read the **auto-generated admin password** from that resource's details/env (username `admin`), then select realm `woodgrove`.
 
 ---
 
