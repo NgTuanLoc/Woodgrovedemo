@@ -450,6 +450,34 @@ Keycloak redirects the browser to `/signin-oidc?code=...`. If Vite doesn't proxy
 
 *Fix:* proxy `/signin-oidc` and `/signout-callback-oidc` (the OIDC handler's default `CallbackPath` / `SignedOutCallbackPath`) to the BFF, as shown in the proxy block above.
 
+**The fixed dev flow** — the browser never leaves the SPA origin (`localhost:5173`):
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant V as Vite dev server<br/>(:5173, SPA origin)
+    participant BFF as BFF<br/>(:7228)
+    participant KC as Keycloak<br/>(:8080)
+
+    Note over B,V: Browser only ever addresses the SPA origin (:5173)
+    B->>V: GET /bff/login?returnUrl=/
+    V->>BFF: proxy + xfwd:<br/>X-Forwarded-Host: localhost:5173<br/>X-Forwarded-Proto: http
+    Note over BFF: UseForwardedHeaders() → host = :5173<br/>redirect_uri = http://localhost:5173/signin-oidc
+    BFF-->>B: 302 → Keycloak /authorize<br/>?redirect_uri=http://localhost:5173/signin-oidc
+    B->>KC: GET /authorize → login form
+    B->>KC: POST alice / password
+    KC-->>B: 302 → http://localhost:5173/signin-oidc?code=...
+    Note over B,V: callback targets :5173 (not the BFF) → Vite proxies it
+    B->>V: GET /signin-oidc?code=...
+    V->>BFF: proxy /signin-oidc (xfwd)
+    BFF->>KC: back-channel: exchange code + PKCE for tokens
+    KC-->>BFF: id / access / refresh tokens
+    BFF-->>B: 302 → / (RedirectUri on forwarded host)<br/>Set-Cookie: Woodgrove.Bff (HttpOnly)
+    Note over B: Lands back on localhost:5173, authenticated ✓
+```
+
+Contrast this with the **broken** flow: without `xfwd`, the BFF would set `redirect_uri=http://localhost:7228/signin-oidc`, so Keycloak returns the browser to `:7228` and the final `302 → /` stays on the BFF.
+
 > **Production note:** none of this is needed in production, where the BFF is the single origin that serves the SPA and receives the callback directly. Forwarded headers are gated behind `IsDevelopment()` because trusting arbitrary proxy headers on a public origin is a spoofing risk.
 
 ---
