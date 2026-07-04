@@ -146,30 +146,108 @@ sequenceDiagram
 
 ## 4. SSO & Single Logout
 
-### How SSO Works
+### How SSO Works (demonstrated by the Intranet app)
 
-Keycloak maintains a **server-side session** (SSO session) per user. When a second app using the same realm initiates login:
-1. Browser is redirected to Keycloak `/authorize`.
-2. Keycloak detects an active SSO session (via its own session cookie).
-3. Keycloak issues a new auth code **without showing the login form**.
-4. The second app completes the code exchange transparently.
+Keycloak maintains a **server-side SSO session** per user, tracked by Keycloak's own
+cookie on the Keycloak origin. This project has **two clients** in the `woodgrove`
+realm — `web-bff` (React app's BFF) and `intranet` (`src/Intranet`, Razor Pages) —
+so SSO is observable, not just theoretical:
 
-In this project there is only one client (`web-bff`), but a second React app with its own BFF client registered in the `woodgrove` realm would get silent login automatically.
+1. Log into the React app (`web-bff` client). Keycloak now has an SSO session.
+2. Open the Intranet (`http://localhost:5262`) and click "Log in".
+3. Browser is redirected to Keycloak `/authorize` for the `intranet` client.
+4. Keycloak sees its own session cookie → issues a fresh auth code
+   **without showing the login form**.
+5. The Intranet completes the code exchange and issues its own cookie
+   (`Woodgrove.Intranet`).
 
-### End-Session / Single Logout
+One login, two apps, two independent app cookies. The shared state lives only
+at Keycloak. Both app sessions carry the same **`sid` claim** — the Keycloak
+session id — which is what ties them together for logout (below).
 
-`/bff/logout` in `src/WebBff/Program.cs` (`SafeReturnUrl` is covered in §5 "Deep-Link Return"):
-```csharp
-app.MapGet("/bff/logout", (string? returnUrl) =>
-    Results.SignOut(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) },
-        new[] { CookieAuthenticationDefaults.AuthenticationScheme,
-                OpenIdConnectDefaults.AuthenticationScheme }));
+### Single Logout: the problem
+
+Each app has its own HttpOnly cookie. When the user logs out of app A, Keycloak
+kills the SSO session — but app B's cookie is still valid until it expires.
+Something must tell app B. Two mechanisms exist:
+
+| Mechanism | How | Trade-off |
+|---|---|---|
+| **Front-channel** | Keycloak renders hidden iframes hitting each app's logout URL in the browser | Simple, but breaks with third-party-cookie blocking — fading out |
+| **Back-channel** (used here) | Keycloak POSTs a signed `logout_token` JWT server-to-server to each client | Robust, works without the browser — production standard |
+
+### Back-Channel Logout: how it works here
+
+```
+User clicks logout in app A
+  │
+  ▼
+App A: clears own cookie, redirects to Keycloak end-session (id_token_hint)
+  │
+  ▼
+Keycloak: ends SSO session, then for EVERY client in that session with a
+registered backchannel.logout.url:
+  │
+  ├── POST logout_token ──▶ web-bff   http://host.docker.internal:5242/bff/backchannel-logout
+  └── POST logout_token ──▶ intranet  http://host.docker.internal:5262/auth/backchannel-logout
+                              │
+                              ▼
+                    App B validates the logout_token, then adds its sid to a
+                    denylist (src/AuthShared/SessionDenylist.cs)
+                              │
+                              ▼
+                    App B's NEXT request with the old cookie:
+                    OnValidatePrincipal sees the denylisted sid
+                    → RejectPrincipal() → user is anonymous
 ```
 
-This triggers:
-1. Local cookie (`Woodgrove.Bff`) deleted.
-2. OIDC handler calls Keycloak's **end-session endpoint** (`/realms/woodgrove/protocol/openid-connect/logout`).
-3. Keycloak invalidates the SSO session → any other app using the same session is also logged out (backchannel or front-channel logout, depending on configuration).
+Revocation is **lazy** — app B's session dies on its *next* request, not at the
+instant of logout. That's inherent to cookie auth: you can't reach into a
+browser and delete a cookie server-side; you can only refuse to honor it.
+
+In the Aspire dashboard, you'll see the log line `Back-channel logout: revoked Keycloak session <sid>` in the receiving app when its next request arrives.
+
+### The logout token (anatomy)
+
+A `logout_token` is a signed JWT (NOT an ID token). Example payload:
+
+```json
+{
+  "iss": "http://localhost:8080/realms/woodgrove",
+  "aud": "intranet",
+  "iat": 1751600000,
+  "exp": 1751600120,
+  "sub": "b1c9...",
+  "sid": "f6a2c9d0-...",
+  "events": { "http://schemas.openid.net/event/backchannel-logout": {} },
+  "jti": "..."
+}
+```
+
+Validation rules (`src/AuthShared/LogoutTokenValidator.cs`):
+- Signature against the realm's JWKS, plus `iss`, `aud`, lifetime — like any JWT.
+- `events` **must** contain the `backchannel-logout` event URI (proves intent).
+- `sid` **must** be present (we registered `backchannel.logout.session.required`).
+- `nonce` **must NOT** be present (spec rule — prevents confusing a logout token
+  with an ID token).
+
+### Where the pieces live
+
+| Piece | File |
+|---|---|
+| Logout-token validation | `src/AuthShared/LogoutTokenValidator.cs` |
+| sid denylist | `src/AuthShared/SessionDenylist.cs` |
+| Receiving endpoint | `src/AuthShared/BackchannelLogoutEndpoint.cs` (mapped at `/bff/backchannel-logout` and `/auth/backchannel-logout`) |
+| Cookie rejection | `src/AuthShared/DenylistCookieEvents.cs` |
+| Client registration | `keycloak/woodgrove-realm.json` → `attributes.backchannel.logout.url` |
+
+### RP-initiated logout (the trigger)
+
+`/bff/logout` (React app) and `/auth/logout` (Intranet) both sign out of the cookie
+scheme **and** the OIDC scheme. The OIDC sign-out redirects to Keycloak's
+**end-session endpoint** with an `id_token_hint` (why both apps keep
+`SaveTokens = true` — the stored `id_token` proves to Keycloak *which* session to
+end, silently, without a confirmation page).
 
 ---
 
@@ -639,6 +717,38 @@ Flow:
 **Cause:** `"secret": "dev-bff-secret"` is hardcoded in `woodgrove-realm.json` and in dev configuration.
 
 **Fix:** In production, generate a strong random secret, store it in a secrets manager (Azure Key Vault, AWS Secrets Manager, etc.), and inject via environment variable. Never commit real secrets to source control.
+
+---
+
+### Back-Channel Logout URL Not Reachable From the Container
+
+**Symptom:** logout in one app doesn't log out the other; no "revoked Keycloak
+session" line in the other app's logs; Keycloak logs show a failed POST.
+Keycloak runs **inside Docker** — `localhost` there is the container itself. The
+realm registers `http://host.docker.internal:<port>/...` so the container can
+reach apps on the host, which requires the pinned ports (5242 BFF, 5262 Intranet)
+to actually match `launchSettings.json`.
+
+---
+
+### Logout Token Issuer Mismatch
+
+**Symptom:** the receiving app logs `Rejected logout token: ... issuer`.
+The `iss` Keycloak writes into logout tokens must equal the issuer the app saw in
+the discovery document. If Keycloak's hostname settings produce a different
+URL for backend-initiated tokens than for browser-facing discovery, validation
+fails closed. Fix by pinning the container's hostname (e.g. `KC_HOSTNAME`) so
+both views agree.
+
+---
+
+### Stale Cookie Without a `sid` Claim
+
+**Symptom:** a session created *before* back-channel logout was added never gets
+revoked. The denylist keys on the `sid` claim; a cookie principal without one is
+skipped (`DenylistCookieEvents`). Fix: log out/in once to mint a fresh session.
+In-memory denylist is also single-instance and empties on restart — dev-only
+simplification; production uses a distributed cache.
 
 ---
 
