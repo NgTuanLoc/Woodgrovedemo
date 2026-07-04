@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using AuthShared;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -9,6 +10,11 @@ using Yarp.ReverseProxy.Transforms;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
+
+// One lifetime for both: a denylist entry only needs to outlive the cookies
+// that can carry its sid.
+var sessionLifetime = TimeSpan.FromHours(8);
+builder.Services.AddSessionDenylist(sessionLifetime);
 
 // In dev the SPA is served by the Vite dev server on a different origin and
 // proxies /bff, /api and the OIDC callback to this BFF. Honor the forwarded
@@ -34,11 +40,18 @@ builder.Services.AddAuthentication(options =>
         // SameAsRequest keeps the cookie usable over plain HTTP in local dev;
         // set CookieSecurePolicy.Always in production (HTTPS-only).
         options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        options.ExpireTimeSpan = sessionLifetime;
         options.SlidingExpiration = true;
         options.Events = new CookieAuthenticationEvents
         {
-            OnValidatePrincipal = TokenRefresher.ValidateAsync
+            OnValidatePrincipal = async context =>
+            {
+                // Back-channel logout check first: if the Keycloak session was
+                // revoked, don't bother refreshing tokens for it.
+                await DenylistCookieEvents.RejectIfRevokedAsync(context);
+                if (context.Principal is not null)
+                    await TokenRefresher.ValidateAsync(context);
+            }
         };
     })
     .AddKeycloakOpenIdConnect("keycloak", realm: "woodgrove",
@@ -95,22 +108,12 @@ app.UseAuthorization();
 
 // --- BFF endpoints ---
 
-// Only allow relative, same-site return URLs to prevent open-redirect abuse
-// (e.g. /bff/logout?returnUrl=https://evil.com). Mirrors the framework's
-// IUrlHelper.IsLocalUrl logic: must start with "/" (but not "//" or "/\") or "~/".
-static string SafeReturnUrl(string? url) =>
-    !string.IsNullOrEmpty(url)
-    && ((url[0] == '/' && (url.Length == 1 || (url[1] != '/' && url[1] != '\\')))
-        || (url.Length > 1 && url[0] == '~' && url[1] == '/'))
-        ? url
-        : "/";
-
 app.MapGet("/bff/login", (string? returnUrl) =>
-    Results.Challenge(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) }))
+    Results.Challenge(new AuthenticationProperties { RedirectUri = ReturnUrl.Sanitize(returnUrl) }))
     .AllowAnonymous();
 
 app.MapGet("/bff/logout", (string? returnUrl) =>
-    Results.SignOut(new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) },
+    Results.SignOut(new AuthenticationProperties { RedirectUri = ReturnUrl.Sanitize(returnUrl) },
         new[] { CookieAuthenticationDefaults.AuthenticationScheme,
                 OpenIdConnectDefaults.AuthenticationScheme }));
 
@@ -161,6 +164,12 @@ if (app.Environment.IsDevelopment())
     });
 }
 
+// Keycloak POSTs signed logout_tokens here when the SSO session ends
+// (registered in keycloak/woodgrove-realm.json as backchannel.logout.url).
+app.MapBackchannelLogout("/bff/backchannel-logout");
+
 app.MapReverseProxy();
 
 app.Run();
+
+public partial class Program { } // for WebApplicationFactory in tests
