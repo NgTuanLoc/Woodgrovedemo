@@ -1,0 +1,47 @@
+@page
+@{
+    var isAuthenticated = User.Identity?.IsAuthenticated == true;
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Woodgrove Intranet</title>
+    <style>
+        body { font-family: system-ui; max-width: 720px; margin: 2rem auto; }
+        code { background: #f2f2f2; padding: 0 .25rem; }
+    </style>
+</head>
+<body>
+    <h1>Woodgrove Intranet (App #2)</h1>
+    <p>
+        This app is a <em>second OIDC client</em> (<code>intranet</code>) in the same
+        Keycloak realm as the React app. If you are already logged in over there,
+        logging in here happens <strong>silently via SSO</strong> — no password prompt.
+    </p>
+
+    @if (isAuthenticated)
+    {
+        <p>Signed in as <strong>@User.Identity!.Name</strong></p>
+        <p>Roles: @string.Join(", ", User.FindAll("roles").Select(c => c.Value))</p>
+        <p>Keycloak session id (<code>sid</code>): <code>@User.FindFirst("sid")?.Value</code></p>
+        <p><a href="/auth/logout">Log out (single logout — also ends the React app's session)</a></p>
+        <details>
+            <summary>All claims</summary>
+            <ul>
+                @foreach (var claim in User.Claims)
+                {
+                    <li><code>@claim.Type</code>: @claim.Value</li>
+                }
+            </ul>
+        </details>
+    }
+    else
+    {
+        <p><a href="/auth/login">Log in with Keycloak</a></p>
+    }
+
+    <hr />
+    <p><a href="http://localhost:5173">Open the React app →</a> (port pinned in AppHost)</p>
+</body>
+</html>

@@ -5,10 +5,12 @@
     <Project Path="src/ServiceDefaults/ServiceDefaults.csproj" />
     <Project Path="src/WebBff/WebBff.csproj" />
     <Project Path="src/AuthShared/AuthShared.csproj" />
+    <Project Path="src/Intranet/Intranet.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Api.Tests/Api.Tests.csproj" />
     <Project Path="tests/AuthShared.Tests/AuthShared.Tests.csproj" />
     <Project Path="tests/WebBff.Tests/WebBff.Tests.csproj" />
+    <Project Path="tests/Intranet.Tests/Intranet.Tests.csproj" />
   </Folder>
 </Solution>
