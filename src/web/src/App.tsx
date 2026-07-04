@@ -20,6 +20,11 @@ export default function App() {
       ) : (
         <button onClick={login}>Log in with Keycloak</button>
       )}
+      <hr />
+      <p>
+        {/* Port pinned in src/Intranet/Properties/launchSettings.json */}
+        <a href="http://localhost:5262">Open the Intranet app (SSO demo) →</a>
+      </p>
     </main>
   );
 }

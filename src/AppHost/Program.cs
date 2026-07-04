@@ -29,10 +29,18 @@ var bff = builder.AddProject<Projects.WebBff>("webbff")
     .WaitFor(keycloak)
     .WaitFor(api);
 
+// Second OIDC client app — exists to demonstrate SSO + back-channel single logout.
+// Its HTTP port (5262) is pinned in launchSettings and baked into the realm's
+// backchannel.logout.url (host.docker.internal:5262).
+builder.AddProject<Projects.Intranet>("intranet")
+    .WithReference(keycloak)
+    .WaitFor(keycloak);
+
 builder.AddNpmApp("web", "../web", "dev")
     .WithReference(bff)
     .WaitFor(bff)
-    .WithHttpEndpoint(env: "PORT")
+    // Port pinned so the Intranet's "Open the React app" link can be static.
+    .WithHttpEndpoint(port: 5173, env: "PORT")
     .WithExternalHttpEndpoints()
     .PublishAsDockerFile();
 
